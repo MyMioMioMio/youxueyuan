@@ -1,0 +1,72 @@
+# 开发环境
+node_modules/
+dist/
+build/
+
+# 编辑器文件
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# 操作系统文件
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 日志文件
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# 运行时数据
+*.pid
+*.seed
+*.pid.lock
+
+# 依赖目录
+jspm_packages/
+
+# 可选npm缓存目录
+.npm
+
+# 可选eslint缓存
+.eslintcache
+
+# 可选cypress测试视频和截图
+cypress/videos/
+cypress/screenshots/
+
+# 本地配置文件
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# 油猴脚本相关
+*.backup
+*.bak
+*.old
+
+# Claude记忆系统
+.claude/
+memory/
+
+# 临时文件
+tmp/
+temp/
+*.tmp
+*.temp
+
+# 构建产物
+*.min.js
+*.min.css
+
+# 测试覆盖率
+coverage/
+.nyc_output/
+
+# 文档生成
+docs/_build/
