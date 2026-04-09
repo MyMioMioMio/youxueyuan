@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         优学院自动静音播放、自动做练习题、自动翻页、修改播放速率（改）
+// @name         优学院自动静音播放、自动做练习题、自动翻页、修改播放速率（重构版）
 // @namespace    [url=mailto:moriartylimitter@outlook.com]moriartylimitter@outlook.com[/url]
-// @version      1.6.2
+// @version      2.0.0
 // @description  自动静音播放每页视频、自动作答、修改播放速率!
 // @author       EliotZhang、Brush-JIM
 // @match        *://ua.dgut.edu.cn/learnCourse/*
@@ -15,31 +15,329 @@
 
 (function () {
     'use strict';
-    /*  ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-     *  优学院自动静音播放、自动做练习题、自动翻页、修改播放速率脚本v1.6.2由EliotZhang @ 2020/06/04 最后更新，2026/04/08 CSS内联修复
-     *  特别感谢Brush-JIM (Mail:Brush-JIM@protonmail.com) 提供的脚本改进支持！
-     *  使用修改播放速率功能请谨慎！！！产生的不良后果恕某概不承担！！！
-     *  请保持网课播放页面在浏览器中活动，避免长时间后台挂机（平台有挂机检测功能），以减少不必要的损失
-     *  自动作答功能由于精力有限目前只支持单/多项选择、判断题、部分填空问答题，如果出现问题请尝试禁用这个功能!
-     *  如果脚本无效请优先尝试刷新页面，若是无效请查看脚本最后的解决方案，如果还是不行请反馈给本人，本人将会尽快修复
-     *  如果是因为网络问题，本人也无能为力
-     *  如果在使用中还有什么问题请通过邮箱联系EliotZhang：moriartylimitter@outlook.com
-     *  ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+    /**
+     * ============================================================================
+     * 优学院自动学习辅助脚本 - 重构版 v2.0.0
+     * ============================================================================
+     *
+     * 功能概述：
+     * 1. 自动静音播放视频
+     * 2. 自动调整播放速率
+     * 3. 自动翻页到下一节
+     * 4. 自动作答各类题目（单选、多选、判断、填空）
+     * 5. 可视化配置面板
+     *
+     * 原作者：EliotZhang、Brush-JIM
+     * 重构优化：Claude Code
+     * 最后更新：2026/04/09
+     *
+     * 使用注意事项：
+     * 1. 请谨慎使用修改播放速率功能，产生的不良后果恕不承担
+     * 2. 请保持网课播放页面在浏览器中活动，避免长时间后台挂机
+     * 3. 自动作答功能目前支持单/多项选择、判断题、部分填空问答题
+     * 4. 如果脚本无效请优先尝试刷新页面
+     * 5. 脚本作者不提供任何保证，请自行判断使用风险
+     * ============================================================================
      */
 
-    var N = 1.50;
-    var EnableAutoPlay = true;
-    var EnableAutoMute = true;
-    var EnableAutoChangeRate = true;
-    var EnableAutoFillAnswer = true;
-    var EnableAutoShowAnswer = true;
-    var EnableAutoAnswerChoices = true;
-    var EnableAutoAnswerJudges = true;
-    var EnableAutoAnswerFills = true;
+    // ============================================================================
+    // 配置管理器
+    // ============================================================================
+    var ConfigManager = {
+        /**
+         * 默认配置
+         */
+        defaults: {
+            // 播放速率 (1.0 = 正常速度)
+            playbackRate: 1.50,
 
-    // 新增函数 By Brush-JIM
+            // 功能开关
+            enableAutoPlay: true,      // 自动播放视频
+            enableAutoMute: true,      // 自动静音
+            enableAutoChangeRate: true, // 自动调整播放速率
+            enableAutoFillAnswer: true, // 自动答题总开关
+            enableAutoShowAnswer: true, // 自动显示答案
+            enableAutoAnswerChoices: true, // 自动作答选择题
+            enableAutoAnswerJudges: true, // 自动作答判断题
+            enableAutoAnswerFills: true   // 自动作答填空/简答题
+        },
+
+        /**
+         * 当前配置
+         */
+        current: {},
+
+        /**
+         * 本地存储键名
+         */
+        storageKey: 'EZUL_CONFIG',
+
+        /**
+         * 初始化配置管理器
+         */
+        init: function () {
+            console.log('[配置管理器] 初始化...');
+            this.loadFromStorage();
+            return this;
+        },
+
+        /**
+         * 从本地存储加载配置，支持从旧格式迁移
+         */
+        loadFromStorage: function () {
+            try {
+                var savedConfig = localStorage.getItem(this.storageKey);
+                if (savedConfig) {
+                    // 新格式配置存在，直接加载
+                    this.current = JSON.parse(savedConfig);
+                    console.log('[配置管理器] 配置已从本地存储加载（新格式）');
+                } else {
+                    // 尝试从旧格式迁移
+                    if (this.migrateFromOldFormat()) {
+                        console.log('[配置管理器] 配置已从旧格式迁移');
+                    } else {
+                        // 无保存配置，使用默认值
+                        this.current = Object.assign({}, this.defaults);
+                        console.log('[配置管理器] 使用默认配置');
+                    }
+                }
+            } catch (error) {
+                console.error('[配置管理器] 加载配置失败:', error);
+                this.current = Object.assign({}, this.defaults);
+            }
+            return this.current;
+        },
+
+        /**
+         * 从旧格式迁移配置
+         * @returns {boolean} 是否成功迁移
+         */
+        migrateFromOldFormat: function () {
+            try {
+                if (localStorage.getItem('EZUL') !== 'EliotZhang、BrushJIM') {
+                    return false; // 没有旧格式配置
+                }
+
+                console.log('[配置管理器] 检测到旧格式配置，开始迁移...');
+
+                // 旧格式到新格式的映射
+                var oldToNewMap = {
+                    'EAM': 'enableAutoMute',
+                    'EACR': 'enableAutoChangeRate',
+                    'EAP': 'enableAutoPlay',
+                    'EASA': 'enableAutoShowAnswer',
+                    'EAAC': 'enableAutoAnswerChoices',
+                    'EAAJ': 'enableAutoAnswerJudges',
+                    'EAAF': 'enableAutoAnswerFills',
+                    'EAFA': 'enableAutoFillAnswer',
+                    'APRC': 'playbackRate'
+                };
+
+                var migratedConfig = Object.assign({}, this.defaults);
+                var hasMigration = false;
+
+                // 迁移布尔值配置
+                for (var oldKey in oldToNewMap) {
+                    if (oldKey === 'APRC') continue; // 单独处理播放速率
+
+                    var newKey = oldToNewMap[oldKey];
+                    var oldValue = localStorage.getItem(oldKey);
+                    if (oldValue !== null) {
+                        migratedConfig[newKey] = (oldValue === 't');
+                        hasMigration = true;
+                        console.log('[配置管理器] 迁移 ' + oldKey + ' -> ' + newKey + ': ' + migratedConfig[newKey]);
+                    }
+                }
+
+                // 迁移播放速率
+                var playbackRateValue = localStorage.getItem('APRC');
+                if (playbackRateValue !== null) {
+                    migratedConfig.playbackRate = parseFloat(playbackRateValue) || this.defaults.playbackRate;
+                    hasMigration = true;
+                    console.log('[配置管理器] 迁移 APRC -> playbackRate: ' + migratedConfig.playbackRate);
+                }
+
+                if (hasMigration) {
+                    this.current = migratedConfig;
+                    this.saveToStorage(); // 保存为新格式
+                    console.log('[配置管理器] 旧格式配置迁移完成');
+                    return true;
+                }
+
+                return false;
+            } catch (error) {
+                console.error('[配置管理器] 迁移旧格式配置失败:', error);
+                return false;
+            }
+        },
+
+        /**
+         * 保存配置到本地存储
+         */
+        saveToStorage: function () {
+            try {
+                localStorage.setItem(this.storageKey, JSON.stringify(this.current));
+                localStorage.setItem('EZUL', 'EliotZhang、BrushJIM'); // 兼容旧版本
+                console.log('[配置管理器] 配置已保存到本地存储');
+                return true;
+            } catch (error) {
+                console.error('[配置管理器] 保存配置失败:', error);
+                return false;
+            }
+        },
+
+        /**
+         * 获取配置值
+         * @param {string} key - 配置键名
+         * @param {any} defaultValue - 默认值
+         * @returns {any} 配置值
+         */
+        get: function (key, defaultValue) {
+            return this.current[key] !== undefined ? this.current[key] : defaultValue;
+        },
+
+        /**
+         * 设置配置值
+         * @param {string} key - 配置键名
+         * @param {any} value - 配置值
+         */
+        set: function (key, value) {
+            this.current[key] = value;
+            return this;
+        },
+
+        /**
+         * 批量设置配置值
+         * @param {Object} config - 配置对象
+         */
+        setAll: function (config) {
+            Object.assign(this.current, config);
+            return this;
+        },
+
+        /**
+         * 重置为默认配置
+         */
+        resetToDefaults: function () {
+            this.current = Object.assign({}, this.defaults);
+            return this;
+        },
+
+        /**
+         * 获取所有配置
+         * @returns {Object} 当前所有配置
+         */
+        getAll: function () {
+            return Object.assign({}, this.current);
+        }
+    };
+
+    // ============================================================================
+    // 全局配置变量（简化访问）
+    // ============================================================================
+
+    // 初始化配置管理器
+    var config = ConfigManager.init();
+
+    // ============================================================================
+    // 日志管理器
+    // ============================================================================
+    var Logger = {
+        /**
+         * 日志级别
+         */
+        levels: {
+            DEBUG: 0,
+            INFO: 1,
+            WARN: 2,
+            ERROR: 3
+        },
+
+        /**
+         * 当前日志级别（默认为INFO）
+         */
+        currentLevel: 1,
+
+        /**
+         * 设置日志级别
+         * @param {string} level - 日志级别：DEBUG, INFO, WARN, ERROR
+         */
+        setLevel: function (level) {
+            if (this.levels[level] !== undefined) {
+                this.currentLevel = this.levels[level];
+                this.info('[日志管理器] 日志级别设置为:', level);
+            }
+        },
+
+        /**
+         * 调试日志
+         * @param {...any} args - 日志参数
+         */
+        debug: function (...args) {
+            if (this.currentLevel <= this.levels.DEBUG) {
+                console.log('[优学院脚本-DEBUG]', ...args);
+            }
+        },
+
+        /**
+         * 信息日志
+         * @param {...any} args - 日志参数
+         */
+        info: function (...args) {
+            if (this.currentLevel <= this.levels.INFO) {
+                console.log('[优学院脚本-INFO]', ...args);
+            }
+        },
+
+        /**
+         * 警告日志
+         * @param {...any} args - 日志参数
+         */
+        warn: function (...args) {
+            if (this.currentLevel <= this.levels.WARN) {
+                console.warn('[优学院脚本-WARN]', ...args);
+            }
+        },
+
+        /**
+         * 错误日志
+         * @param {...any} args - 日志参数
+         */
+        error: function (...args) {
+            if (this.currentLevel <= this.levels.ERROR) {
+                console.error('[优学院脚本-ERROR]', ...args);
+            }
+        }
+    };
+
+    // 快捷访问方法
+    function getConfig(key, defaultValue) {
+        return config.get(key, defaultValue);
+    }
+
+    // 常用配置的快捷访问
+    var ENABLE_AUTO_PLAY = getConfig('enableAutoPlay', true);
+    var ENABLE_AUTO_MUTE = getConfig('enableAutoMute', true);
+    var ENABLE_AUTO_CHANGE_RATE = getConfig('enableAutoChangeRate', true);
+    var ENABLE_AUTO_FILL_ANSWER = getConfig('enableAutoFillAnswer', true);
+    var ENABLE_AUTO_SHOW_ANSWER = getConfig('enableAutoShowAnswer', true);
+    var ENABLE_AUTO_ANSWER_CHOICES = getConfig('enableAutoAnswerChoices', true);
+    var ENABLE_AUTO_ANSWER_JUDGES = getConfig('enableAutoAnswerJudges', true);
+    var ENABLE_AUTO_ANSWER_FILLS = getConfig('enableAutoAnswerFills', true);
+    var PLAYBACK_RATE = getConfig('playbackRate', 1.50);
+
+    // ============================================================================
+    // 视频播放管理器
+    // ============================================================================
+
+    /**
+     * 视频播放控制函数
+     * @param {Object} func - 回调函数
+     * @param {boolean} slept - 是否已等待
+     */
     function Video(func = {}, slept = false) {
-        if (!EnableAutoPlay)
+        if (!ENABLE_AUTO_PLAY)
             return;
         if (autoAnswering) {
             setTimeout(function () {
@@ -53,75 +351,75 @@
             }, '3000');
             return;
         }
-        var A_tmp = $('video');
-        var A = [];
-        for (let d = 0; d < A_tmp.length; d++) {
-            if (A_tmp[d].src != "") {
-                A.push(A_tmp[d]);
+        var videoElementsTemp = $('video');
+        var videoElements = [];
+        for (let i = 0; i < videoElementsTemp.length; i++) {
+            if (videoElementsTemp[i].src != "") {
+                videoElements.push(videoElementsTemp[i]);
             }
         }
-        if (A.length === 0) {
+        if (videoElements.length === 0) {
             // 没有视频，检查是否有题目需要处理
             var qw = $('.question-wrapper');
-            if (qw.length > 0 && EnableAutoFillAnswer) {
-                console.log('没有视频，但有题目，先处理题目');
+            if (qw.length > 0 && ENABLE_AUTO_FILL_ANSWER) {
+                Logger.info('没有视频，但有题目，先处理题目');
                 ShowAndFillAnswer();
             } else {
                 GotoNextPage();
             }
             return;
         }
-        var B = [];
-        var tmp = $('div[class="video-bottom"]');
-        for (let b = 0; b < tmp.length; b++) {
-            let span = tmp[b].getElementsByTagName("span")[0];
+        var videoStatus = [];
+        var videoBottomElements = $('div[class="video-bottom"]');
+        for (let i = 0; i < videoBottomElements.length; i++) {
+            let span = videoBottomElements[i].getElementsByTagName("span")[0];
             if (span) {
                 let data_bind = span.getAttribute('data-bind');
                 if (data_bind == 'text: $root.i18nMessageText().finished' || data_bind == 'text: $root.i18nMessageText().viewed' || data_bind == 'text: $root.i18nMessageText().unviewed') {
-                    B.push(data_bind);
+                    videoStatus.push(data_bind);
                 }
             }
         }
 
         function video_ctrl(func) {
-            for (let c = 0; c < A.length; c++) {
-                if (B[c] == 'text: $root.i18nMessageText().viewed' || B[c] == 'text: $root.i18nMessageText().unviewed' || B[c] === false) {
-                    if (c - 1 >= 0) {
-                        if (A[c - 1].currentTime != 0) {
-                            if (A[c - 1].paused === true) {
-                                A[c - 1].play()
+            for (let i = 0; i < videoElements.length; i++) {
+                if (videoStatus[i] == 'text: $root.i18nMessageText().viewed' || videoStatus[i] == 'text: $root.i18nMessageText().unviewed' || videoStatus[i] === false) {
+                    if (i - 1 >= 0) {
+                        if (videoElements[i - 1].currentTime != 0) {
+                            if (videoElements[i - 1].paused === true) {
+                                videoElements[i - 1].play()
                             }
-                            if (EnableAutoMute && A[c - 1].muted === false) {
-                                A[c - 1].muted = true;
+                            if (ENABLE_AUTO_MUTE && videoElements[i - 1].muted === false) {
+                                videoElements[i - 1].muted = true;
                             }
-                            if (EnableAutoChangeRate && A[c - 1].playbackRate != N) {
-                                A[c - 1].playbackRate = N
+                            if (ENABLE_AUTO_CHANGE_RATE && videoElements[i - 1].playbackRate != PLAYBACK_RATE) {
+                                videoElements[i - 1].playbackRate = PLAYBACK_RATE
                             }
                             break;
                         }
                     }
-                    if (A[c].paused === true) {
-                        A[c].play();
+                    if (videoElements[i].paused === true) {
+                        videoElements[i].play();
                     }
-                    if (EnableAutoMute && A[c].muted === false) {
-                        A[c].muted = true;
+                    if (ENABLE_AUTO_MUTE && videoElements[i].muted === false) {
+                        videoElements[i].muted = true;
                     }
-                    if (EnableAutoChangeRate && A[c].playbackRate != N) {
-                        A[c].playbackRate = N;
+                    if (ENABLE_AUTO_CHANGE_RATE && videoElements[i].playbackRate != PLAYBACK_RATE) {
+                        videoElements[i].playbackRate = PLAYBACK_RATE;
                     }
                     break;
                 }
             }
-            if (B[B.length - 1] == 'text: $root.i18nMessageText().finished' || B[B.length - 1] === true) {
-                if (A[A.length - 1].currentTime != 0) {
-                    if (A[A.length - 1].paused === true) {
-                        A[A.length - 1].play()
+            if (videoStatus[videoStatus.length - 1] == 'text: $root.i18nMessageText().finished' || videoStatus[videoStatus.length - 1] === true) {
+                if (videoElements[videoElements.length - 1].currentTime != 0) {
+                    if (videoElements[videoElements.length - 1].paused === true) {
+                        videoElements[videoElements.length - 1].play()
                     }
-                    if (EnableAutoMute && A[A.length - 1].muted === false) {
-                        A[A.length - 1].muted = true
+                    if (ENABLE_AUTO_MUTE && videoElements[videoElements.length - 1].muted === false) {
+                        videoElements[videoElements.length - 1].muted = true
                     }
-                    if (EnableAutoChangeRate && A[A.length - 1].playbackRate != N) {
-                        A[A.length - 1].playbackRate = N
+                    if (ENABLE_AUTO_CHANGE_RATE && videoElements[videoElements.length - 1].playbackRate != PLAYBACK_RATE) {
+                        videoElements[videoElements.length - 1].playbackRate = PLAYBACK_RATE
                     }
                     setTimeout(func, "2000", func);
                 } else {
@@ -131,14 +429,14 @@
                 setTimeout(func, "2000", func);
             }
         }
-        if (A.length == B.length) {
+        if (videoElements.length == videoStatus.length) {
             video_ctrl(Video);
         } else {
-            B = [];
-            for (let d = 0; d < A.length; d++) {
-                B[d] = false;
-                A[d].addEventListener("ended", function () {
-                    B[d] = true;
+            videoStatus = [];
+            for (let i = 0; i < videoElements.length; i++) {
+                videoStatus[i] = false;
+                videoElements[i].addEventListener("ended", function () {
+                    videoStatus[i] = true;
                 }, true);
             }
             video_ctrl(video_ctrl);
@@ -146,7 +444,7 @@
     }
 
     function GotoNextPage() {
-        if (autoAnswering || !EnableAutoPlay || checkingModal)
+        if (autoAnswering || !ENABLE_AUTO_PLAY || checkingModal)
             return;
 
         // 检查是否有未完成题目
@@ -154,10 +452,10 @@
         if (qw.length > 0) {
             var unfinishedQuestions = qw.not('.finished');
             if (unfinishedQuestions.length > 0) {
-                console.log('有未完成题目，不翻页');
+                Logger.info('有未完成题目，不翻页');
                 // 有未完成题目，先答题
-                if (EnableAutoFillAnswer) {
-                    console.log('自动答题已启用，开始答题');
+                if (ENABLE_AUTO_FILL_ANSWER) {
+                    Logger.info('自动答题已启用，开始答题');
                     ShowAndFillAnswer();
                 }
                 return;
@@ -167,7 +465,7 @@
         var nextPageBtn = $('.mobile-next-page-btn');
         if (nextPageBtn.length === 0)
             return;
-        console.log('翻页到下一节');
+        Logger.info('翻页到下一节');
         nextPageBtn.each((k, n) => {
             n.click();
         });
@@ -185,7 +483,7 @@
         }
         checkingModal = true;
         var qw = $('.question-wrapper');
-        if (qw.length > 0 && EnableAutoFillAnswer) {
+        if (qw.length > 0 && ENABLE_AUTO_FILL_ANSWER) {
             ShowAndFillAnswer();
             checkingModal = false;
             return;
@@ -211,18 +509,18 @@
             var incompleteDiv = $('div[data-bind*="modalType() == \'incomplete\'"]');
             if (incompleteDiv.length > 0) {
                 modalType = 'incomplete';
-                console.log('检测到题目未完成提示框');
+                Logger.info('检测到题目未完成提示框');
             }
 
             if (modalType === 'incomplete') {
                 // 题目未完成提示框 - 点击"留在本页"并确保题目完成
                 var op = $('.modal-operation').children();
                 if (op.length >= 2) {
-                    console.log('点击"留在本页"按钮');
+                    Logger.info('点击"留在本页"按钮');
                     op[0].click(); // 总是点击"留在本页"
 
                     // 等待模态框关闭
-                    setTimeout(function() {
+                    setTimeout(function () {
                         // 确保题目被完成
                         ensureQuestionsCompleted();
                     }, 1000);
@@ -231,7 +529,7 @@
                 // 其他类型的模态框
                 var op = $('.modal-operation').children();
                 if (op.length >= 2)
-                    op[EnableAutoFillAnswer ? 0 : 1].click();
+                    op[ENABLE_AUTO_FILL_ANSWER ? 0 : 1].click();
                 else {
                     var continueBtn = $('.btn-submit');
                     if (continueBtn.length > 0) {
@@ -241,7 +539,7 @@
                         });
                     }
                 }
-                if (EnableAutoFillAnswer)
+                if (ENABLE_AUTO_FILL_ANSWER)
                     ShowAndFillAnswer();
             }
         }
@@ -249,32 +547,32 @@
     }
 
     function ensureQuestionsCompleted() {
-        console.log('确保题目完成');
-        if (autoAnswering || !EnableAutoFillAnswer) {
-            console.log('已经在答题或自动答题未启用');
+        Logger.info('确保题目完成');
+        if (autoAnswering || !ENABLE_AUTO_FILL_ANSWER) {
+            Logger.info('已经在答题或自动答题未启用');
             return;
         }
 
         var allQuestions = $('.question-wrapper');
         if (allQuestions.length === 0) {
-            console.log('没有找到题目');
+            Logger.info('没有找到题目');
             return;
         }
 
         // 使用新的检测函数检查未完成题目
         var unfinishedQuestions = getUnfinishedQuestions();
 
-        console.log('题目统计：总共', allQuestions.length, '个，未完成', unfinishedQuestions.length, '个');
+        Logger.info('题目统计：总共', allQuestions.length, '个，未完成', unfinishedQuestions.length, '个');
 
         if (unfinishedQuestions.length > 0) {
-            console.log('发现未完成题目，开始答题');
+            Logger.info('发现未完成题目，开始答题');
             ShowAndFillAnswer();
         } else {
-            console.log('所有题目已完成');
+            Logger.info('所有题目已完成');
             // 如果有提交按钮，点击提交
             var submitBtn = $('.btn-submit:contains("提交")');
             if (submitBtn.length > 0) {
-                console.log('点击提交按钮');
+                Logger.info('点击提交按钮');
                 submitBtn.click();
             }
         }
@@ -310,7 +608,7 @@
     }
 
     function FillAnswers() {
-        if (!autoAnswering || !EnableAutoAnswerFills)
+        if (!autoAnswering || !ENABLE_AUTO_ANSWER_FILLS)
             return;
         var ansarr = [];
         var idList = [];
@@ -428,7 +726,7 @@
                             if (childElements.length > 0) {
                                 // 获取所有子元素的文本
                                 var childText = '';
-                                childElements.each(function() {
+                                childElements.each(function () {
                                     var text = $(this).text().trim();
                                     if (text && text !== '正确答案：' && text !== '答案：' && text !== '参考答案：') {
                                         childText += text + ' ';
@@ -466,7 +764,7 @@
                             var nextSiblings = domAnswerElement.nextAll('span, div, p');
                             if (nextSiblings.length > 0) {
                                 var siblingText = '';
-                                nextSiblings.each(function() {
+                                nextSiblings.each(function () {
                                     var text = $(this).text().trim();
                                     if (text && !text.includes('正确答案：') && !text.includes('答案：')) {
                                         siblingText += text + ' ';
@@ -515,9 +813,9 @@
                         // 多选题答案：逗号分隔的字母（如"A,B,C,D"）
                         console.log('识别为逗号分隔的多选题答案:', domAnswerText);
                         // 按逗号分割，过滤出字母字符，转换为大写
-                        var answers = domAnswerText.split(',').map(function(item) {
+                        var answers = domAnswerText.split(',').map(function (item) {
                             return item.trim().toUpperCase();
-                        }).filter(function(item) {
+                        }).filter(function (item) {
                             return /^[A-D]$/.test(item);
                         });
                         console.log('解析后的答案数组:', answers);
@@ -548,7 +846,7 @@
             if (answerElements.length > 0) {
                 // 过滤出可能在当前问题容器内的元素
                 var questionContainer = $('#question' + questionId + ', .question-wrapper[id="question' + questionId + '"]');
-                var relevantElements = answerElements.filter(function() {
+                var relevantElements = answerElements.filter(function () {
                     // 检查元素是否在问题容器内
                     return questionContainer.length === 0 || $(this).closest(questionContainer).length > 0;
                 });
@@ -574,9 +872,9 @@
                             // 多选题答案：逗号分隔的字母（如"A,B,C,D"）
                             console.log('识别为逗号分隔的多选题答案:', extractedAnswer);
                             // 按逗号分割，过滤出字母字符，转换为大写
-                            var answers = extractedAnswer.split(',').map(function(item) {
+                            var answers = extractedAnswer.split(',').map(function (item) {
                                 return item.trim().toUpperCase();
-                            }).filter(function(item) {
+                            }).filter(function (item) {
                                 return /^[A-D]$/.test(item);
                             });
                             console.log('解析后的答案数组:', answers);
@@ -672,7 +970,7 @@
             }
 
             // 检查填空/简答题：textarea或input是否有内容
-            var filledInputs = $(questionElement).find('textarea, .blank-input, input[type="text"]').filter(function() {
+            var filledInputs = $(questionElement).find('textarea, .blank-input, input[type="text"]').filter(function () {
                 return $(this).val().trim().length > 0;
             });
             if (filledInputs.length > 0) {
@@ -694,7 +992,7 @@
     // 获取未完成的题目列表
     function getUnfinishedQuestions() {
         var unfinished = [];
-        $('.question-wrapper').each(function(k, v) {
+        $('.question-wrapper').each(function (k, v) {
             if (!isQuestionCompleted(v)) {
                 unfinished.push(v);
             }
@@ -703,7 +1001,7 @@
     }
 
     function ShowAndFillAnswer() {
-        if (autoAnswering | !EnableAutoFillAnswer)
+        if (autoAnswering | !ENABLE_AUTO_FILL_ANSWER)
             return;
         autoAnswering = true;
 
@@ -734,17 +1032,17 @@
         }
 
         var unfinishedQuestions = getUnfinishedQuestions();
-        console.log('题目统计：总共', allQuestions.length, '个，未完成', unfinishedQuestions.length, '个');
+        Logger.info('题目统计：总共', allQuestions.length, '个，未完成', unfinishedQuestions.length, '个');
 
         // 如果没有未完成题目，直接翻页
         if (unfinishedQuestions.length === 0) {
-            console.log('所有题目已完成，跳过处理');
+            Logger.info('所有题目已完成，跳过处理');
             autoAnswering = false;
 
             // 检查是否有提交按钮，如果有则点击提交（可能已经提交过了）
             var submitBtn = $('.btn-submit:contains("提交")');
             if (submitBtn.length > 0) {
-                console.log('检测到提交按钮，点击提交确保完成');
+                Logger.info('检测到提交按钮，点击提交确保完成');
                 submitBtn.click();
                 setTimeout(GotoNextPage, 2000);
             } else {
@@ -794,11 +1092,11 @@
             }
         }
 
-        console.log('答案检查结果：', hasAnswer ? '有答案' : '无答案');
+        Logger.info('答案检查结果：', hasAnswer ? '有答案' : '无答案');
 
         if (!hasAnswer) {
             // 无答案：需要先提交一次以获取答案
-            console.log('无答案，执行初次提交以获取答案');
+            Logger.info('无答案，执行初次提交以获取答案');
             performInitialSubmission(qw, sqList);
         } else {
             // 有答案：直接进行正确答案流程
@@ -809,7 +1107,7 @@
 
     // 初次提交以获取答案
     function performInitialSubmission(qw, sqList) {
-        console.log('执行初次提交');
+        Logger.info('执行初次提交');
 
         // 尝试选择一些答案（增加提交成功率）
         var checkBox = qw.find('.checkbox');
@@ -817,7 +1115,7 @@
 
         // 选择题：点击第一个选项
         if (checkBox.length > 0) {
-            console.log('发现选择题，点击第一个选项');
+            Logger.info('发现选择题，点击第一个选项');
             var firstCheckbox = checkBox.first();
             if (firstCheckbox.length > 0 && !firstCheckbox.hasClass('selected')) {
                 firstCheckbox.click();
@@ -826,7 +1124,7 @@
 
         // 判断题：点击"正确"
         if (choiceBox.length > 0) {
-            console.log('发现判断题，点击"正确"');
+            Logger.info('发现判断题，点击"正确"');
             var firstChoice = choiceBox.first();
             if (firstChoice.length > 0) {
                 firstChoice.click();
@@ -834,10 +1132,10 @@
         }
 
         // 填空和简答题：尝试填写一些内容
-        if (EnableAutoAnswerFills) {
+        if (ENABLE_AUTO_ANSWER_FILLS) {
             var txtAreas = $('textarea, .blank-input');
             if (txtAreas.length > 0) {
-                console.log('发现填空/简答题，填写默认内容');
+                Logger.info('发现填空/简答题，填写默认内容');
                 txtAreas.each((k, v) => {
                     $(v).val('答案');
                 });
@@ -846,14 +1144,14 @@
         }
 
         // 提交答案 - 等待1秒让页面处理选择
-        if (EnableAutoPlay) {
-            console.log('已选择答案，等待1秒让页面处理...');
+        if (ENABLE_AUTO_PLAY) {
+            Logger.info('已选择答案，等待1秒让页面处理...');
             // 同步等待1秒
             var waitStart = Date.now();
             while (Date.now() - waitStart < 1000) {
                 // 繁忙等待
             }
-            console.log('等待结束，开始提交');
+            Logger.info('等待结束，开始提交');
 
             $('textarea, .blank-input').trigger('change');
             // 寻找包含"提交"文本的提交按钮
@@ -870,7 +1168,7 @@
 
             // 等待5秒让答案出现
             autoAnswering = false;
-            setTimeout(function() {
+            setTimeout(function () {
                 console.log('等待结束，重新检查答案');
                 // 重新检查答案并执行正确答案流程
                 setTimeout(ShowAndFillAnswer, 1500);
@@ -887,7 +1185,7 @@
         // 过滤掉已完成的题目
         var filteredQuestions = [];
         var filteredIds = [];
-        qw.each(function(k, v) {
+        qw.each(function (k, v) {
             if (!isQuestionCompleted(v)) {
                 filteredQuestions.push(v);
                 var id = $(v).attr('id');
@@ -936,7 +1234,7 @@
                         an.push(answer);
                         flag = true;
                     },
-                    error: function(_xhr, _status, _error) {
+                    error: function (_xhr, _status, _error) {
                         retryCount++;
                         console.log('获取答案失败，重试 ' + retryCount + '/' + maxRetries + '，questionId:', id);
                         if (retryCount >= maxRetries) {
@@ -991,7 +1289,7 @@
             // 记录所有按钮供调试
             var allButtons = $('button, a.btn, .btn, [role="button"]');
             console.log('页面中按钮总数:', allButtons.length);
-            allButtons.each(function(k, btn) {
+            allButtons.each(function (k, btn) {
                 var text = $(btn).text().trim();
                 if (text.includes('重做') || text.includes('重置') || text.includes('Redo') || text.includes('Reset')) {
                     console.log('可能的重做按钮:', text, '类名:', btn.className);
@@ -1002,7 +1300,7 @@
         // 检查是否所有题目都有.finished类但没有"回答正确"文本
         var allFinished = completedQuestions.length === qw.length;
         var hasCorrectText = false;
-        qw.each(function(k, v) {
+        qw.each(function (k, v) {
             var text = $(v).text();
             if (text.includes('回答正确')) {
                 hasCorrectText = true;
@@ -1031,7 +1329,7 @@
             var allQuestionsAfterReset = $('.question-wrapper');
             var newFilteredQuestions = [];
             var newFilteredIds = [];
-            allQuestionsAfterReset.each(function(k, v) {
+            allQuestionsAfterReset.each(function (k, v) {
                 if (!isQuestionCompleted(v)) {
                     newFilteredQuestions.push(v);
                     var id = $(v).attr('id');
@@ -1077,7 +1375,7 @@
                             an.push(answer);
                             flag = true;
                         },
-                        error: function(_xhr, _status, _error) {
+                        error: function (_xhr, _status, _error) {
                             retryCount++;
                             console.log('重新获取答案失败，重试 ' + retryCount + '/' + maxRetries + '，questionId:', id);
                             if (retryCount >= maxRetries) {
@@ -1093,7 +1391,7 @@
         }
 
         // 显示答案
-        if (EnableAutoShowAnswer) {
+        if (ENABLE_AUTO_SHOW_ANSWER) {
             var t = qw.find('.question-title-html');
             t.each(function (k, v) {
                 var ans = an.shift();
@@ -1187,7 +1485,7 @@
             }
 
             // 检查是否为选择题答案（A-D字母）
-            if (a[0].match(/[A-Z]/i) && a[0].length == 1 && EnableAutoAnswerChoices) {
+            if (a[0].match(/[A-Z]/i) && a[0].length == 1 && ENABLE_AUTO_ANSWER_CHOICES) {
                 console.log('识别为选择题答案');
                 if (checkList.length === 0) {
                     console.error('checkList为空，无法处理选择题');
@@ -1211,7 +1509,7 @@
                         console.log('选项' + aa + '已经选中');
                     }
                 });
-            } else if (a[0].match(/(([tT][rR][uU][eE])|([fF][aA][lL][sS][eE]))/) && EnableAutoAnswerJudges) {
+            } else if (a[0].match(/(([tT][rR][uU][eE])|([fF][aA][lL][sS][eE]))/) && ENABLE_AUTO_ANSWER_JUDGES) {
                 console.log('识别为判断题答案');
                 if (choiceList.length === 0) {
                     console.error('choiceList为空，无法处理判断题');
@@ -1236,26 +1534,26 @@
         });
 
         // 填空和简答题
-        if (EnableAutoAnswerFills) {
+        if (ENABLE_AUTO_ANSWER_FILLS) {
             FillAnswers();
             $.globalEval("$('textarea, .blank-input').trigger('change')");
         }
 
         // 提交正确答案 - 等待3秒让页面处理所有选择
-        if (EnableAutoPlay) {
+        if (ENABLE_AUTO_PLAY) {
             console.log('所有答案已选择，等待3秒让页面处理...');
             // 同步等待3秒
             var waitStart = Date.now();
             while (Date.now() - waitStart < 3000) {
                 // 繁忙等待
             }
-            console.log('等待结束，开始提交');
+            Logger.info('等待结束，开始提交');
 
             $('textarea, .blank-input').trigger('change');
             // 寻找包含"提交"文本的提交按钮
             var submitBtns = $('.btn-submit:contains("提交")');
             if (submitBtns.length > 0) {
-                console.log('找到提交按钮，点击提交正确答案');
+                Logger.info('找到提交按钮，点击提交正确答案');
                 submitBtns.click();
             } else {
                 // 如果没有找到特定文本的提交按钮，尝试所有提交按钮
@@ -1287,7 +1585,7 @@
 
                 // 也可以检查是否有"回答正确"文本
                 var correctTextFound = false;
-                qw.each(function(k, v) {
+                qw.each(function (k, v) {
                     var text = $(v).text();
                     if (text.includes('回答正确')) {
                         correctTextFound = true;
@@ -1580,43 +1878,72 @@
                 autoAnswerChoicesOp.checked = autoAnswerJudgesOp.checked = autoAnswerFillsOp.checked = autoShowAnswerOp.checked = true;
         });
         saveOpBtn.addEventListener('click', function () {
-            EnableAutoMute = autoMuteOp.checked;
-            EnableAutoChangeRate = autoPlayRateOp.checked;
-            EnableAutoPlay = autoPlayOp.checked;
-            EnableAutoShowAnswer = autoShowAnswerOp.checked;
-            EnableAutoAnswerChoices = autoAnswerChoicesOp.checked;
-            EnableAutoAnswerJudges = autoAnswerJudgesOp.checked;
-            EnableAutoAnswerFills = autoAnswerFillsOp.checked;
-            if (!EnableAutoShowAnswer && !EnableAutoAnswerChoices && !EnableAutoAnswerJudges && !EnableAutoAnswerFills)
+            console.log('[配置管理器] 保存配置...');
+
+            // 更新全局配置变量
+            ENABLE_AUTO_MUTE = autoMuteOp.checked;
+            ENABLE_AUTO_CHANGE_RATE = autoPlayRateOp.checked;
+            ENABLE_AUTO_PLAY = autoPlayOp.checked;
+            ENABLE_AUTO_SHOW_ANSWER = autoShowAnswerOp.checked;
+            ENABLE_AUTO_ANSWER_CHOICES = autoAnswerChoicesOp.checked;
+            ENABLE_AUTO_ANSWER_JUDGES = autoAnswerJudgesOp.checked;
+            ENABLE_AUTO_ANSWER_FILLS = autoAnswerFillsOp.checked;
+
+            // 自动答题总开关逻辑
+            if (!ENABLE_AUTO_SHOW_ANSWER && !ENABLE_AUTO_ANSWER_CHOICES && !ENABLE_AUTO_ANSWER_JUDGES && !ENABLE_AUTO_ANSWER_FILLS) {
                 autoAnswerOp.checked = false;
-            EnableAutoFillAnswer = autoAnswerOp.checked;
-            N = autoPlayRateChangeOp.value;
-            // Save
-            window.localStorage.EZUL = 'EliotZhang、BrushJIM';
-            window.localStorage.EAM = EnableAutoMute ? 't' : 'f';
-            window.localStorage.EACR = EnableAutoChangeRate ? 't' : 'f';
-            window.localStorage.EAP = EnableAutoPlay ? 't' : 'f';
-            window.localStorage.EASA = EnableAutoShowAnswer ? 't' : 'f';
-            window.localStorage.EAAC = EnableAutoAnswerChoices ? 't' : 'f';
-            window.localStorage.EAAJ = EnableAutoAnswerJudges ? 't' : 'f';
-            window.localStorage.EAAF = EnableAutoAnswerFills ? 't' : 'f';
-            window.localStorage.EAFA = EnableAutoFillAnswer ? 't' : 'f';
-            window.localStorage.APRC = autoPlayRateChangeOp.value.toString();
+            }
+            ENABLE_AUTO_FILL_ANSWER = autoAnswerOp.checked;
+            PLAYBACK_RATE = parseFloat(autoPlayRateChangeOp.value);
+
+            // 使用配置管理器保存配置
+            var newConfig = {
+                enableAutoMute: ENABLE_AUTO_MUTE,
+                enableAutoChangeRate: ENABLE_AUTO_CHANGE_RATE,
+                enableAutoPlay: ENABLE_AUTO_PLAY,
+                enableAutoShowAnswer: ENABLE_AUTO_SHOW_ANSWER,
+                enableAutoAnswerChoices: ENABLE_AUTO_ANSWER_CHOICES,
+                enableAutoAnswerJudges: ENABLE_AUTO_ANSWER_JUDGES,
+                enableAutoAnswerFills: ENABLE_AUTO_ANSWER_FILLS,
+                enableAutoFillAnswer: ENABLE_AUTO_FILL_ANSWER,
+                playbackRate: PLAYBACK_RATE
+            };
+
+            config.setAll(newConfig);
+            config.saveToStorage();
+
+            console.log('[配置管理器] 配置已保存:', newConfig);
+
+            // 重新启动视频和检查模态框
             Video({}, true);
             CheckModal(true);
         }, true);
-        // Load
-        if (window.localStorage.getItem('EZUL') === 'EliotZhang、BrushJIM') {
-            autoMuteOp.checked = EnableAutoMute = window.localStorage.EAM == 't';
-            autoPlayRateOp.checked = EnableAutoChangeRate = window.localStorage.EACR == 't';
-            autoPlayOp.checked = EnableAutoPlay = window.localStorage.EAP == 't';
-            autoShowAnswerOp.checked = EnableAutoShowAnswer = window.localStorage.EASA == 't';
-            autoAnswerChoicesOp.checked = EnableAutoAnswerChoices = window.localStorage.EAAC == 't';
-            autoAnswerJudgesOp.checked = EnableAutoAnswerJudges = window.localStorage.EAAJ == 't';
-            autoAnswerFillsOp.checked = EnableAutoAnswerFills = window.localStorage.EAAF == 't';
-            autoAnswerOp.checked = EnableAutoFillAnswer = window.localStorage.EAFA == 't';
-            autoPlayRateChangeOp.value = N = parseFloat(window.localStorage.APRC);
-        }
+        // Load - 从配置管理器加载配置
+        console.log('[配置管理器] 加载配置到UI...');
+        var currentConfig = config.getAll();
+
+        // 更新UI控件
+        autoMuteOp.checked = ENABLE_AUTO_MUTE = currentConfig.enableAutoMute;
+        autoPlayRateOp.checked = ENABLE_AUTO_CHANGE_RATE = currentConfig.enableAutoChangeRate;
+        autoPlayOp.checked = ENABLE_AUTO_PLAY = currentConfig.enableAutoPlay;
+        autoShowAnswerOp.checked = ENABLE_AUTO_SHOW_ANSWER = currentConfig.enableAutoShowAnswer;
+        autoAnswerChoicesOp.checked = ENABLE_AUTO_ANSWER_CHOICES = currentConfig.enableAutoAnswerChoices;
+        autoAnswerJudgesOp.checked = ENABLE_AUTO_ANSWER_JUDGES = currentConfig.enableAutoAnswerJudges;
+        autoAnswerFillsOp.checked = ENABLE_AUTO_ANSWER_FILLS = currentConfig.enableAutoAnswerFills;
+        autoAnswerOp.checked = ENABLE_AUTO_FILL_ANSWER = currentConfig.enableAutoFillAnswer;
+        autoPlayRateChangeOp.value = PLAYBACK_RATE = currentConfig.playbackRate;
+
+        console.log('[配置管理器] 配置已加载到UI:', {
+            enableAutoMute: ENABLE_AUTO_MUTE,
+            enableAutoChangeRate: ENABLE_AUTO_CHANGE_RATE,
+            enableAutoPlay: ENABLE_AUTO_PLAY,
+            enableAutoShowAnswer: ENABLE_AUTO_SHOW_ANSWER,
+            enableAutoAnswerChoices: ENABLE_AUTO_ANSWER_CHOICES,
+            enableAutoAnswerJudges: ENABLE_AUTO_ANSWER_JUDGES,
+            enableAutoAnswerFills: ENABLE_AUTO_ANSWER_FILLS,
+            enableAutoFillAnswer: ENABLE_AUTO_FILL_ANSWER,
+            playbackRate: PLAYBACK_RATE
+        });
     }
 
     function Main() {
@@ -1648,23 +1975,34 @@
         }
     }
 
-    var autoAnswering = false;
-    var checkingModal = false;
-    var mainBtn;
-    var dragBall;
-    var saveOpBtn;
-    var OptionPanel;
-    var MainPanel;
-    var autoPlayOp;
-    var autoMuteOp;
-    var autoPlayRateOp;
-    var autoPlayRateChangeOp;
-    var autoAnswerOp;
-    var autoShowAnswerOp;
-    var autoAnswerChoicesOp;
-    var autoAnswerJudgesOp;
-    var autoAnswerFillsOp;
-    var pageid = '';
+    // ============================================================================
+    // 全局状态变量
+    // ============================================================================
+
+    var autoAnswering = false;          // 是否正在自动答题（防止重复执行）
+    var checkingModal = false;          // 是否正在检查模态框（防止重复执行）
+    var pageid = '';                    // 当前页面ID（用于API请求）
+
+    // ============================================================================
+    // UI元素引用
+    // ============================================================================
+
+    var mainBtn;                        // 主按钮（隐藏设置按钮）
+    var dragBall;                       // 可拖动球体
+    var saveOpBtn;                      // 保存设置按钮
+    var OptionPanel;                    // 选项面板容器
+    var MainPanel;                      // 主面板容器
+
+    // 配置面板复选框元素
+    var autoPlayOp;                     // 自动播放开关
+    var autoMuteOp;                     // 自动静音开关
+    var autoPlayRateOp;                 // 自动调整速率开关
+    var autoPlayRateChangeOp;           // 播放速率输入框
+    var autoAnswerOp;                   // 自动答题总开关
+    var autoShowAnswerOp;               // 自动显示答案开关
+    var autoAnswerChoicesOp;            // 自动作答选择题开关
+    var autoAnswerJudgesOp;             // 自动作答判断题开关
+    var autoAnswerFillsOp;              // 自动作答填空/简答题开关
 
     setInterval(function () { unsafeWindow.document.dispatchEvent(new Event('mousemove')) }, 1000);
 
