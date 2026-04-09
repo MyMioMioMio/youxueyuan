@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         优学院自动静音播放、自动做练习题、自动翻页、修改播放速率
+// @name         优学院自动静音播放、自动做练习题、自动翻页、修改播放速率（改）
 // @namespace    [url=mailto:moriartylimitter@outlook.com]moriartylimitter@outlook.com[/url]
 // @version      1.6.2
 // @description  自动静音播放每页视频、自动作答、修改播放速率!
@@ -61,7 +61,14 @@
             }
         }
         if (A.length === 0) {
-            GotoNextPage();
+            // 没有视频，检查是否有题目需要处理
+            var qw = $('.question-wrapper');
+            if (qw.length > 0 && EnableAutoFillAnswer) {
+                console.log('没有视频，但有题目，先处理题目');
+                ShowAndFillAnswer();
+            } else {
+                GotoNextPage();
+            }
             return;
         }
         var B = [];
@@ -141,9 +148,26 @@
     function GotoNextPage() {
         if (autoAnswering || !EnableAutoPlay || checkingModal)
             return;
+
+        // 检查是否有未完成题目
+        var qw = $('.question-wrapper');
+        if (qw.length > 0) {
+            var unfinishedQuestions = qw.not('.finished');
+            if (unfinishedQuestions.length > 0) {
+                console.log('有未完成题目，不翻页');
+                // 有未完成题目，先答题
+                if (EnableAutoFillAnswer) {
+                    console.log('自动答题已启用，开始答题');
+                    ShowAndFillAnswer();
+                }
+                return;
+            }
+        }
+
         var nextPageBtn = $('.mobile-next-page-btn');
         if (nextPageBtn.length === 0)
             return;
+        console.log('翻页到下一节');
         nextPageBtn.each((k, n) => {
             n.click();
         });
@@ -156,11 +180,8 @@
         if (!slept) {
             setTimeout(function () {
                 CheckModal(true);
-            }, '2000');
+            }, '5000');
             return;
-        }
-        if (EnableAutoPlay) {
-            CheckModal();
         }
         checkingModal = true;
         var qw = $('.question-wrapper');
@@ -185,22 +206,78 @@
             return;
         }
         if (alertModal.className.match(/\sin/)) {
-            var op = $('.modal-operation').children();
-            if (op.length >= 2)
-                op[EnableAutoFillAnswer ? 0 : 1].click();
-            else {
-                var continueBtn = $('.btn-submit');
-                if (continueBtn.length > 0) {
-                    continueBtn.each((k, v) => {
-                        if ($(v).text() != '提交')
-                            $(v).click();
-                    });
-                }
+            // 检测模态框类型
+            var modalType = 'unknown';
+            var incompleteDiv = $('div[data-bind*="modalType() == \'incomplete\'"]');
+            if (incompleteDiv.length > 0) {
+                modalType = 'incomplete';
+                console.log('检测到题目未完成提示框');
             }
-            if (EnableAutoFillAnswer)
-                ShowAndFillAnswer();
+
+            if (modalType === 'incomplete') {
+                // 题目未完成提示框 - 点击"留在本页"并确保题目完成
+                var op = $('.modal-operation').children();
+                if (op.length >= 2) {
+                    console.log('点击"留在本页"按钮');
+                    op[0].click(); // 总是点击"留在本页"
+
+                    // 等待模态框关闭
+                    setTimeout(function() {
+                        // 确保题目被完成
+                        ensureQuestionsCompleted();
+                    }, 1000);
+                }
+            } else {
+                // 其他类型的模态框
+                var op = $('.modal-operation').children();
+                if (op.length >= 2)
+                    op[EnableAutoFillAnswer ? 0 : 1].click();
+                else {
+                    var continueBtn = $('.btn-submit');
+                    if (continueBtn.length > 0) {
+                        continueBtn.each((k, v) => {
+                            if ($(v).text() != '提交')
+                                $(v).click();
+                        });
+                    }
+                }
+                if (EnableAutoFillAnswer)
+                    ShowAndFillAnswer();
+            }
         }
         checkingModal = false;
+    }
+
+    function ensureQuestionsCompleted() {
+        console.log('确保题目完成');
+        if (autoAnswering || !EnableAutoFillAnswer) {
+            console.log('已经在答题或自动答题未启用');
+            return;
+        }
+
+        var allQuestions = $('.question-wrapper');
+        if (allQuestions.length === 0) {
+            console.log('没有找到题目');
+            return;
+        }
+
+        // 使用新的检测函数检查未完成题目
+        var unfinishedQuestions = getUnfinishedQuestions();
+
+        console.log('题目统计：总共', allQuestions.length, '个，未完成', unfinishedQuestions.length, '个');
+
+        if (unfinishedQuestions.length > 0) {
+            console.log('发现未完成题目，开始答题');
+            ShowAndFillAnswer();
+        } else {
+            console.log('所有题目已完成');
+            // 如果有提交按钮，点击提交
+            var submitBtn = $('.btn-submit:contains("提交")');
+            if (submitBtn.length > 0) {
+                console.log('点击提交按钮');
+                submitBtn.click();
+            }
+        }
     }
 
     function RemoveDuplicatedItem(arr) {
@@ -279,18 +356,359 @@
         });
     }
 
+    // 从DOM获取答案的辅助函数
+    function getAnswerFromDOM(questionId) {
+        var maxRetries = 8; // 增加重试次数
+        var retryDelay = 800; // 增加等待时间
+
+        console.log('开始从DOM获取答案，questionId:', questionId);
+
+        for (var retry = 0; retry < maxRetries; retry++) {
+            // 尝试多种选择器查找答案
+            var selectors = [
+                '#question' + questionId + ' .correct-answer-area span:last-child',
+                '#question' + questionId + ' .correct-answer-area',
+                '#question' + questionId + ' .answer-result-text',
+                '.question-wrapper[id="question' + questionId + '"] .correct-answer-area span:last-child',
+                '.question-wrapper[id="question' + questionId + '"] .correct-answer-area',
+                '.question-wrapper[id="question' + questionId + '"] .answer-result-text',
+                '#question' + questionId + ' span[style*="color:"]', // 可能有颜色的文本
+                '.correct-answer-area span:last-child', // 更通用的选择器
+                '.correct-answer-area', // 直接找答案区域
+                '.answer-result-text .correct-answer-area span:last-child',
+                '.answer-result-text', // 直接找结果文本
+                '.answer-text', // 可能的选择器
+                '.correct-answer', // 可能的选择器
+                '.answer-content', // 可能的选择器
+                '.result-content', // 可能的选择器
+                '.question-result', // 可能的选择器
+                '.result-text', // 可能的选择器
+                '.correct-text', // 可能的选择器
+                '.right-answer', // 可能的选择器
+                '.right-answer-text', // 可能的选择器
+                '.show-answer', // 可能的选择器
+                '.answer-show', // 可能的选择器
+                '.answer-display' // 可能的选择器
+            ];
+
+            console.log('第' + (retry + 1) + '次尝试查找答案，questionId:', questionId);
+
+            for (var i = 0; i < selectors.length; i++) {
+                var domAnswerElement = $(selectors[i]);
+                if (domAnswerElement.length > 0) {
+                    console.log('找到DOM元素，选择器:', selectors[i], '数量:', domAnswerElement.length);
+
+                    // 获取文本内容
+                    var domAnswerText = domAnswerElement.text().trim();
+                    console.log('原始答案文本:', domAnswerText);
+
+                    // 清理文本：移除HTML标签和多余空格
+                    domAnswerText = domAnswerText.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+                    console.log('清理后答案文本:', domAnswerText);
+
+                    // 检查是否包含常见答案关键词
+                    if (domAnswerText.includes('答案：') || domAnswerText.includes('正确答案：') || domAnswerText.includes('参考答案：')) {
+                        console.log('检测到答案关键词，尝试提取...');
+                        // 尝试多种提取模式
+                        var extracted = false;
+
+                        // 模式1：提取冒号后的内容
+                        var match = domAnswerText.match(/(?:答案|正确答案|参考答案)：\s*([^\s](?:.*[^\s])?)/);
+                        if (match && match[1]) {
+                            domAnswerText = match[1].trim();
+                            console.log('提取后答案(模式1):', domAnswerText);
+                            extracted = true;
+                        }
+
+                        // 模式2：如果提取失败或只有标签，尝试获取子元素文本
+                        if (!extracted || domAnswerText === '正确答案：' || domAnswerText === '答案：') {
+                            console.log('尝试获取子元素文本...');
+                            // 查找.correct-answer-area内的所有span、div、p元素
+                            var childElements = domAnswerElement.find('span, div, p, strong, b, em, i');
+                            if (childElements.length > 0) {
+                                // 获取所有子元素的文本
+                                var childText = '';
+                                childElements.each(function() {
+                                    var text = $(this).text().trim();
+                                    if (text && text !== '正确答案：' && text !== '答案：' && text !== '参考答案：') {
+                                        childText += text + ' ';
+                                    }
+                                });
+                                childText = childText.trim();
+                                if (childText) {
+                                    domAnswerText = childText;
+                                    console.log('从子元素提取的答案:', domAnswerText);
+                                    extracted = true;
+                                }
+                            }
+                        }
+
+                        // 模式3：如果还是只有标签，尝试获取.correct-answer-area的完整HTML
+                        if (!extracted || domAnswerText === '正确答案：' || domAnswerText === '答案：') {
+                            console.log('尝试分析完整HTML结构...');
+                            var htmlContent = domAnswerElement.html().trim();
+                            console.log('HTML结构:', htmlContent);
+                            // 移除标签，只保留文本
+                            var cleanText = htmlContent.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+                            // 移除"正确答案："等标签
+                            cleanText = cleanText.replace(/(?:答案|正确答案|参考答案)：\s*/g, '').trim();
+                            if (cleanText && cleanText !== '正确答案：' && cleanText !== '答案：') {
+                                domAnswerText = cleanText;
+                                console.log('从HTML提取的答案:', domAnswerText);
+                                extracted = true;
+                            }
+                        }
+
+                        // 模式4：查找.correct-answer-area后面或相邻的元素
+                        if (!extracted || domAnswerText === '正确答案：' || domAnswerText === '答案：') {
+                            console.log('尝试查找相邻元素...');
+                            // 查找.correct-answer-area后面的兄弟元素
+                            var nextSiblings = domAnswerElement.nextAll('span, div, p');
+                            if (nextSiblings.length > 0) {
+                                var siblingText = '';
+                                nextSiblings.each(function() {
+                                    var text = $(this).text().trim();
+                                    if (text && !text.includes('正确答案：') && !text.includes('答案：')) {
+                                        siblingText += text + ' ';
+                                    }
+                                });
+                                siblingText = siblingText.trim();
+                                if (siblingText) {
+                                    domAnswerText = siblingText;
+                                    console.log('从相邻元素提取的答案:', domAnswerText);
+                                    extracted = true;
+                                }
+                            }
+                        }
+                    }
+
+                    // 如果文本为空，尝试获取HTML内容
+                    if (!domAnswerText) {
+                        domAnswerText = domAnswerElement.html().trim();
+                        console.log('HTML内容:', domAnswerText);
+                    }
+
+                    // 解析答案文本
+                    if (!domAnswerText) {
+                        console.log('答案文本为空，跳过');
+                        continue;
+                    }
+
+                    // 检查是否是只有标签没有实际答案
+                    if (domAnswerText === '正确答案：' || domAnswerText === '答案：' || domAnswerText === '参考答案：') {
+                        console.log('只有答案标签没有实际答案内容，跳过此选择器');
+                        continue; // 尝试下一个选择器
+                    }
+
+                    // 判断题答案：正确/错误
+                    if (domAnswerText === '正确' || domAnswerText === '对' || domAnswerText === 'True' || domAnswerText === 'true') {
+                        console.log('识别为判断题答案: 正确');
+                        return ['true'];
+                    } else if (domAnswerText === '错误' || domAnswerText === '错' || domAnswerText === 'False' || domAnswerText === 'false') {
+                        console.log('识别为判断题答案: 错误');
+                        return ['false'];
+                    } else if (domAnswerText.length === 1 && /^[A-Z]$/.test(domAnswerText)) {
+                        // 单选题答案：单个字母
+                        console.log('识别为单选题答案:', domAnswerText);
+                        return [domAnswerText];
+                    } else if (domAnswerText.includes(',') && /^[A-Z,\s]+$/i.test(domAnswerText)) {
+                        // 多选题答案：逗号分隔的字母（如"A,B,C,D"）
+                        console.log('识别为逗号分隔的多选题答案:', domAnswerText);
+                        // 按逗号分割，过滤出字母字符，转换为大写
+                        var answers = domAnswerText.split(',').map(function(item) {
+                            return item.trim().toUpperCase();
+                        }).filter(function(item) {
+                            return /^[A-D]$/.test(item);
+                        });
+                        console.log('解析后的答案数组:', answers);
+                        return answers;
+                    } else if (domAnswerText.length > 1 && /^[A-Z]+$/.test(domAnswerText)) {
+                        // 多选题答案：多个字母（如"AB"）
+                        console.log('识别为多选题答案:', domAnswerText);
+                        return domAnswerText.split('');
+                    } else if (/^[A-D]$/i.test(domAnswerText)) {
+                        // 单个字母选项（不区分大小写）
+                        console.log('识别为选项答案:', domAnswerText.toUpperCase());
+                        return [domAnswerText.toUpperCase()];
+                    } else if (/^[A-D]+$/i.test(domAnswerText)) {
+                        // 多个字母选项（不区分大小写）
+                        console.log('识别为多选题答案:', domAnswerText.toUpperCase());
+                        return domAnswerText.toUpperCase().split('');
+                    } else {
+                        // 其他类型的答案（如文字）
+                        console.log('识别为文本答案:', domAnswerText);
+                        return [domAnswerText];
+                    }
+                }
+            }
+
+            // 备用方案：直接查找包含"答案："或"正确答案："的元素
+            console.log('尝试备用方案：查找包含答案关键词的元素');
+            var answerElements = $(':contains("答案："), :contains("正确答案："), :contains("参考答案：")');
+            if (answerElements.length > 0) {
+                // 过滤出可能在当前问题容器内的元素
+                var questionContainer = $('#question' + questionId + ', .question-wrapper[id="question' + questionId + '"]');
+                var relevantElements = answerElements.filter(function() {
+                    // 检查元素是否在问题容器内
+                    return questionContainer.length === 0 || $(this).closest(questionContainer).length > 0;
+                });
+
+                if (relevantElements.length > 0) {
+                    console.log('找到包含答案关键词的元素，数量:', relevantElements.length);
+                    // 取第一个相关元素
+                    var answerElement = relevantElements.first();
+                    var fullText = answerElement.text().trim();
+                    console.log('包含关键词的完整文本:', fullText);
+
+                    // 尝试提取答案
+                    var match = fullText.match(/(?:答案|正确答案|参考答案)：\s*([^\s](?:.*[^\s])?)/);
+                    if (match && match[1]) {
+                        var extractedAnswer = match[1].trim();
+                        console.log('从备用方案提取的答案:', extractedAnswer);
+                        // 解析答案
+                        if (extractedAnswer === '正确' || extractedAnswer === '对') {
+                            return ['true'];
+                        } else if (extractedAnswer === '错误' || extractedAnswer === '错') {
+                            return ['false'];
+                        } else if (extractedAnswer.includes(',') && /^[A-Z,\s]+$/i.test(extractedAnswer)) {
+                            // 多选题答案：逗号分隔的字母（如"A,B,C,D"）
+                            console.log('识别为逗号分隔的多选题答案:', extractedAnswer);
+                            // 按逗号分割，过滤出字母字符，转换为大写
+                            var answers = extractedAnswer.split(',').map(function(item) {
+                                return item.trim().toUpperCase();
+                            }).filter(function(item) {
+                                return /^[A-D]$/.test(item);
+                            });
+                            console.log('解析后的答案数组:', answers);
+                            return answers;
+                        } else if (/^[A-Z]+$/.test(extractedAnswer)) {
+                            return extractedAnswer.split('');
+                        } else if (/^[A-D]+$/i.test(extractedAnswer)) {
+                            return extractedAnswer.toUpperCase().split('');
+                        } else {
+                            return [extractedAnswer];
+                        }
+                    }
+                }
+            }
+
+            // 如果没找到，等待一段时间再重试
+            if (retry < maxRetries - 1) {
+                console.log('未找到答案，等待' + retryDelay + 'ms后重试...');
+                // 同步等待（使用繁忙循环，因为async: false）
+                var start = Date.now();
+                while (Date.now() - start < retryDelay) {
+                    // 繁忙等待
+                }
+            }
+        }
+
+        console.log('未能在DOM中找到答案，questionId:', questionId);
+        return null;
+    }
+
+    // 检查是否有答案可用（API或DOM）
+    function hasAnswersAvailable(questionIds) {
+        if (!questionIds || questionIds.length === 0) return false;
+
+        // 检查第一个题目是否有答案
+        var firstId = questionIds[0];
+        var hasAnswer = false;
+
+        // 先尝试API
+        $.ajax({
+            url: 'https://api.ulearning.cn/questionAnswer/' + firstId,
+            type: "GET",
+            contentType: "application/json",
+            dataType: 'json',
+            async: false,
+            data: {
+                parentId: pageid,
+            },
+            success: function (result, status, xhr) {
+                if (result.correctAnswerList !== undefined && result.correctAnswerList !== null) {
+                    hasAnswer = true;
+                }
+            }
+        });
+
+        // 如果API没有答案，检查DOM
+        if (!hasAnswer) {
+            var domAnswer = getAnswerFromDOM(firstId);
+            if (domAnswer !== null) {
+                hasAnswer = true;
+            }
+        }
+
+        console.log('答案可用性检查:', hasAnswer ? '有答案' : '无答案');
+        return hasAnswer;
+    }
+
+    // 检查题目是否已完成（有.finished类或包含"回答正确"文本）
+    function isQuestionCompleted(questionElement) {
+        if (!questionElement) return false;
+
+        // 检查是否包含"回答正确"文本 - 最可靠的指标
+        var text = $(questionElement).text();
+        if (text.includes('回答正确')) {
+            return true;
+        }
+
+        // 检查.finished类，但需要验证答案是否真的被选中
+        if ($(questionElement).hasClass('finished')) {
+            // 进一步验证：检查是否有选中的答案选项
+            var hasSelectedAnswer = false;
+
+            // 检查选择题：.checkbox.selected
+            var selectedCheckboxes = $(questionElement).find('.checkbox.selected');
+            if (selectedCheckboxes.length > 0) {
+                hasSelectedAnswer = true;
+            }
+
+            // 检查判断题：.choice-btn.selected
+            var selectedChoiceBtns = $(questionElement).find('.choice-btn.selected');
+            if (selectedChoiceBtns.length > 0) {
+                hasSelectedAnswer = true;
+            }
+
+            // 检查填空/简答题：textarea或input是否有内容
+            var filledInputs = $(questionElement).find('textarea, .blank-input, input[type="text"]').filter(function() {
+                return $(this).val().trim().length > 0;
+            });
+            if (filledInputs.length > 0) {
+                hasSelectedAnswer = true;
+            }
+
+            // 如果有.finished类但没有选中的答案，很可能题目没有真正完成
+            if (hasSelectedAnswer) {
+                return true;
+            } else {
+                console.log('题目有.finished类但没有选中的答案，视为未完成');
+                return false;
+            }
+        }
+
+        return false;
+    }
+
+    // 获取未完成的题目列表
+    function getUnfinishedQuestions() {
+        var unfinished = [];
+        $('.question-wrapper').each(function(k, v) {
+            if (!isQuestionCompleted(v)) {
+                unfinished.push(v);
+            }
+        });
+        return unfinished;
+    }
+
     function ShowAndFillAnswer() {
         if (autoAnswering | !EnableAutoFillAnswer)
             return;
         autoAnswering = true;
-        var sqList = [];
-        var qw = $('.question-wrapper');
+
+        // 获取当前页面ID
         var pages = $('.page-item');
-        var an = [];
-        qw.each(function (k, v) {
-            var id = $(v).attr('id');
-            sqList.push(id.replace('question', ''));
-        });
         var flag = false;
         pages.each(function (k, v) {
             if (flag) return;
@@ -307,13 +725,199 @@
             GotoNextPage();
             return;
         }
-        if (sqList.length <= 0) {
+
+        // 获取所有题目和未完成题目
+        var allQuestions = $('.question-wrapper');
+        if (allQuestions.length <= 0) {
             autoAnswering = false;
             return;
         }
+
+        var unfinishedQuestions = getUnfinishedQuestions();
+        console.log('题目统计：总共', allQuestions.length, '个，未完成', unfinishedQuestions.length, '个');
+
+        // 如果没有未完成题目，直接翻页
+        if (unfinishedQuestions.length === 0) {
+            console.log('所有题目已完成，跳过处理');
+            autoAnswering = false;
+
+            // 检查是否有提交按钮，如果有则点击提交（可能已经提交过了）
+            var submitBtn = $('.btn-submit:contains("提交")');
+            if (submitBtn.length > 0) {
+                console.log('检测到提交按钮，点击提交确保完成');
+                submitBtn.click();
+                setTimeout(GotoNextPage, 2000);
+            } else {
+                GotoNextPage();
+            }
+            return;
+        }
+
+        // 只处理未完成题目
+        var qw = $(unfinishedQuestions);
+        var sqList = [];
+        var an = [];
+        qw.each(function (k, v) {
+            var id = $(v).attr('id');
+            if (id) {
+                sqList.push(id.replace('question', ''));
+            }
+        });
+
+
+        // 检查是否有答案可用
+        var hasAnswer = false;
+        var firstId = sqList[0];
+
+        // 尝试API获取答案
+        $.ajax({
+            url: 'https://api.ulearning.cn/questionAnswer/' + firstId,
+            type: "GET",
+            contentType: "application/json",
+            dataType: 'json',
+            async: false,
+            data: {
+                parentId: pageid,
+            },
+            success: function (result, status, xhr) {
+                if (result.correctAnswerList !== undefined && result.correctAnswerList !== null) {
+                    hasAnswer = true;
+                }
+            }
+        });
+
+        // 尝试DOM获取答案
+        if (!hasAnswer) {
+            var domAnswer = getAnswerFromDOM(firstId);
+            if (domAnswer !== null) {
+                hasAnswer = true;
+            }
+        }
+
+        console.log('答案检查结果：', hasAnswer ? '有答案' : '无答案');
+
+        if (!hasAnswer) {
+            // 无答案：需要先提交一次以获取答案
+            console.log('无答案，执行初次提交以获取答案');
+            performInitialSubmission(qw, sqList);
+        } else {
+            // 有答案：直接进行正确答案流程
+            console.log('有答案，进行正确答案流程');
+            performCorrectAnswerFlow(qw, sqList, an);
+        }
+    }
+
+    // 初次提交以获取答案
+    function performInitialSubmission(qw, sqList) {
+        console.log('执行初次提交');
+
+        // 尝试选择一些答案（增加提交成功率）
+        var checkBox = qw.find('.checkbox');
+        var choiceBox = qw.find('.choice-btn');
+
+        // 选择题：点击第一个选项
+        if (checkBox.length > 0) {
+            console.log('发现选择题，点击第一个选项');
+            var firstCheckbox = checkBox.first();
+            if (firstCheckbox.length > 0 && !firstCheckbox.hasClass('selected')) {
+                firstCheckbox.click();
+            }
+        }
+
+        // 判断题：点击"正确"
+        if (choiceBox.length > 0) {
+            console.log('发现判断题，点击"正确"');
+            var firstChoice = choiceBox.first();
+            if (firstChoice.length > 0) {
+                firstChoice.click();
+            }
+        }
+
+        // 填空和简答题：尝试填写一些内容
+        if (EnableAutoAnswerFills) {
+            var txtAreas = $('textarea, .blank-input');
+            if (txtAreas.length > 0) {
+                console.log('发现填空/简答题，填写默认内容');
+                txtAreas.each((k, v) => {
+                    $(v).val('答案');
+                });
+                $.globalEval("$('textarea, .blank-input').trigger('change')");
+            }
+        }
+
+        // 提交答案 - 等待1秒让页面处理选择
+        if (EnableAutoPlay) {
+            console.log('已选择答案，等待1秒让页面处理...');
+            // 同步等待1秒
+            var waitStart = Date.now();
+            while (Date.now() - waitStart < 1000) {
+                // 繁忙等待
+            }
+            console.log('等待结束，开始提交');
+
+            $('textarea, .blank-input').trigger('change');
+            // 寻找包含"提交"文本的提交按钮
+            var submitBtns = $('.btn-submit:contains("提交")');
+            if (submitBtns.length > 0) {
+                console.log('找到提交按钮，点击提交');
+                submitBtns.click();
+            } else {
+                // 如果没有找到特定文本的提交按钮，尝试所有提交按钮
+                console.log('未找到包含"提交"的按钮，尝试所有.btn-submit按钮');
+                $('.btn-submit').click();
+            }
+            console.log('初次提交完成，等待答案出现');
+
+            // 等待5秒让答案出现
+            autoAnswering = false;
+            setTimeout(function() {
+                console.log('等待结束，重新检查答案');
+                // 重新检查答案并执行正确答案流程
+                setTimeout(ShowAndFillAnswer, 1500);
+            }, 5000);
+        } else {
+            autoAnswering = false;
+        }
+    }
+
+    // 正确答案流程：有答案时的处理
+    function performCorrectAnswerFlow(qw, sqList, an) {
+        console.log('开始正确答案流程');
+
+        // 过滤掉已完成的题目
+        var filteredQuestions = [];
+        var filteredIds = [];
+        qw.each(function(k, v) {
+            if (!isQuestionCompleted(v)) {
+                filteredQuestions.push(v);
+                var id = $(v).attr('id');
+                if (id) {
+                    filteredIds.push(id.replace('question', ''));
+                }
+            }
+        });
+
+        // 如果所有题目都已完成，直接返回
+        if (filteredQuestions.length === 0) {
+            console.log('所有题目已完成，无需处理');
+            autoAnswering = false;
+            return;
+        }
+
+        // 更新qw和sqList为未完成题目
+        qw = $(filteredQuestions);
+        sqList = filteredIds;
+
+        console.log('正确答案流程：处理', sqList.length, '个未完成题目');
+
+        // 获取所有答案
+        an = []; // 重置答案数组
         $(sqList).each(function (k, id) {
             var flag = false;
-            while (!flag)
+            var retryCount = 0;
+            var maxRetries = 3;
+
+            while (!flag && retryCount < maxRetries) {
                 $.ajax({
                     url: 'https://api.ulearning.cn/questionAnswer/' + id,
                     type: "GET",
@@ -324,89 +928,389 @@
                         parentId: pageid,
                     },
                     success: function (result, status, xhr) {
-                        an.push(result.correctAnswerList);
+                        var answer = result.correctAnswerList;
+                        if (answer === undefined || answer === null) {
+                            // 尝试从DOM中获取答案
+                            answer = getAnswerFromDOM(id);
+                        }
+                        an.push(answer);
                         flag = true;
+                    },
+                    error: function(_xhr, _status, _error) {
+                        retryCount++;
+                        console.log('获取答案失败，重试 ' + retryCount + '/' + maxRetries + '，questionId:', id);
+                        if (retryCount >= maxRetries) {
+                            // 最后一次重试失败，尝试从DOM获取
+                            var answer = getAnswerFromDOM(id);
+                            an.push(answer);
+                            flag = true;
+                        }
                     }
                 });
+            }
         });
-        //
+
+        // 检查是否有重做按钮（如果有已完成题目）
+        var completedQuestions = $('.question-wrapper.finished');
+        console.log('已完成题目数量:', completedQuestions.length);
+
+        // 尝试多种选择器查找重做按钮
+        var redoSelectors = [
+            '.btn-redo',
+            '.redo-btn',
+            '.btn-reset',
+            '.reset-btn',
+            '.btn-redo-question',
+            '.question-redo',
+            '[data-bind*="redo"]',
+            '[onclick*="redo"]',
+            'button:contains("重做")',
+            'a:contains("重做")',
+            'span:contains("重做")',
+            'div:contains("重做")',
+            '.question-wrapper .btn',
+            '.question-footer .btn'
+        ];
+
+        var redoButtons = null;
+        var foundSelector = null;
+
+        for (var i = 0; i < redoSelectors.length; i++) {
+            var selector = redoSelectors[i];
+            var buttons = $(selector);
+            if (buttons.length > 0) {
+                console.log('找到重做按钮，选择器:', selector, '数量:', buttons.length);
+                redoButtons = buttons;
+                foundSelector = selector;
+                break;
+            }
+        }
+
+        if (!redoButtons || redoButtons.length === 0) {
+            console.log('未找到重做按钮，检查页面中可能的按钮');
+            // 记录所有按钮供调试
+            var allButtons = $('button, a.btn, .btn, [role="button"]');
+            console.log('页面中按钮总数:', allButtons.length);
+            allButtons.each(function(k, btn) {
+                var text = $(btn).text().trim();
+                if (text.includes('重做') || text.includes('重置') || text.includes('Redo') || text.includes('Reset')) {
+                    console.log('可能的重做按钮:', text, '类名:', btn.className);
+                }
+            });
+        }
+
+        // 检查是否所有题目都有.finished类但没有"回答正确"文本
+        var allFinished = completedQuestions.length === qw.length;
+        var hasCorrectText = false;
+        qw.each(function(k, v) {
+            var text = $(v).text();
+            if (text.includes('回答正确')) {
+                hasCorrectText = true;
+            }
+        });
+
+        // 特殊情况：所有题目都有.finished类但没有"回答正确"文本
+        var shouldForceRedo = allFinished && !hasCorrectText && redoButtons && redoButtons.length > 0;
+
+        // 只有在有未完成题目且有重做按钮时才点击重做按钮
+        // 或者特殊情况：所有题目都有.finished类但没有"回答正确"文本
+        if ((filteredQuestions.length > 0 || shouldForceRedo) && redoButtons && redoButtons.length > 0) {
+            console.log('有未完成题目且发现重做按钮，点击重做按钮重置题目，选择器:', foundSelector);
+            redoButtons.each((k, btn) => {
+                console.log('点击第' + (k + 1) + '个重做按钮');
+                btn.click();
+            });
+
+            // 等待页面重置（2秒）
+            var start = Date.now();
+            while (Date.now() - start < 2000) {
+                // 繁忙等待
+            }
+
+            // 重新获取所有题目列表（因为页面已重置）
+            var allQuestionsAfterReset = $('.question-wrapper');
+            var newFilteredQuestions = [];
+            var newFilteredIds = [];
+            allQuestionsAfterReset.each(function(k, v) {
+                if (!isQuestionCompleted(v)) {
+                    newFilteredQuestions.push(v);
+                    var id = $(v).attr('id');
+                    if (id) {
+                        newFilteredIds.push(id.replace('question', ''));
+                    }
+                }
+            });
+
+            // 如果重置后所有题目都已完成，直接返回
+            if (newFilteredQuestions.length === 0) {
+                console.log('重置后所有题目已完成，无需处理');
+                autoAnswering = false;
+                return;
+            }
+
+            // 更新qw和sqList为重置后的未完成题目
+            qw = $(newFilteredQuestions);
+            sqList = newFilteredIds;
+
+            // 重新获取答案（因为页面已重置）
+            an = [];
+            $(sqList).each(function (k, id) {
+                var flag = false;
+                var retryCount = 0;
+                var maxRetries = 3;
+
+                while (!flag && retryCount < maxRetries) {
+                    $.ajax({
+                        url: 'https://api.ulearning.cn/questionAnswer/' + id,
+                        type: "GET",
+                        contentType: "application/json",
+                        dataType: 'json',
+                        async: false,
+                        data: {
+                            parentId: pageid,
+                        },
+                        success: function (result, status, xhr) {
+                            var answer = result.correctAnswerList;
+                            if (answer === undefined || answer === null) {
+                                answer = getAnswerFromDOM(id);
+                            }
+                            an.push(answer);
+                            flag = true;
+                        },
+                        error: function(_xhr, _status, _error) {
+                            retryCount++;
+                            console.log('重新获取答案失败，重试 ' + retryCount + '/' + maxRetries + '，questionId:', id);
+                            if (retryCount >= maxRetries) {
+                                // 最后一次重试失败，尝试从DOM获取
+                                var answer = getAnswerFromDOM(id);
+                                an.push(answer);
+                                flag = true;
+                            }
+                        }
+                    });
+                }
+            });
+        }
+
+        // 显示答案
         if (EnableAutoShowAnswer) {
             var t = qw.find('.question-title-html');
             t.each(function (k, v) {
                 var ans = an.shift();
-                $(v).after('<span style="color:red;">答案：' + ans + '</span>');
+                // 如果ans为undefined，尝试从DOM获取答案
+                if (ans === undefined || ans === null) {
+                    var questionWrapper = $(v).closest('.question-wrapper');
+                    if (questionWrapper.length > 0) {
+                        var questionId = questionWrapper.attr('id');
+                        if (questionId) {
+                            // 提取数字ID
+                            var idMatch = questionId.match(/question(\d+)/);
+                            if (idMatch && idMatch[1]) {
+                                ans = getAnswerFromDOM(idMatch[1]);
+                            }
+                        }
+                    }
+                }
+                // 显示答案
+                var displayText = ans;
+                if (ans === undefined || ans === null) {
+                    displayText = '未知';
+                } else if (Array.isArray(ans)) {
+                    displayText = ans.join(', ');
+                }
+                $(v).after('<span style="color:red;">答案：' + displayText + '</span>');
                 an.push(ans);
             });
         }
-        //
+
+        // 根据答案选择正确选项
+        // 尝试多种选择器查找选择题选项
         var checkBox = qw.find('.checkbox');
+        if (checkBox.length === 0) {
+            // 备用选择器：查找可能的多选题选项
+            checkBox = qw.find('[role="button"], .choice-item, .option-item, .text, .content-wrapper, .choice-option');
+            console.log('使用备用选择器找到选择题选项数量:', checkBox.length);
+        }
         var choiceBox = qw.find('.choice-btn');
+        if (choiceBox.length === 0) {
+            // 备用选择器：查找可能的判断题选项
+            choiceBox = qw.find('.judge-btn, .true-false-btn, [data-bind*="choice"]');
+            console.log('使用备用选择器找到判断题选项数量:', choiceBox.length);
+        }
         var checkList = [];
         var choiceList = [];
         let lasOffsetP = '';
+        console.log('开始分组选择题选项，总数:', checkBox.length);
         checkBox.each((k, cb) => {
-            if (lasOffsetP == $(cb).offsetParent().attr('id')) {
+            var offsetParentId = $(cb).offsetParent().attr('id');
+            console.log('选项' + k + '的offsetParent id:', offsetParentId);
+            if (lasOffsetP == offsetParentId) {
+                console.log('选项' + k + '属于当前问题组');
                 checkList[checkList.length - 1].push(cb);
             } else {
+                console.log('选项' + k + '开始新问题组，前一个组id:', lasOffsetP);
                 var l = [];
                 l.push(cb);
                 checkList.push(l);
-                lasOffsetP = $(cb).offsetParent().attr('id');
+                lasOffsetP = offsetParentId;
             }
         });
+        console.log('选择题分组完成，组数:', checkList.length);
+        console.log('开始分组判断题选项，总数:', choiceBox.length);
         lasOffsetP = '';
         choiceBox.each((k, cb) => {
-            if (lasOffsetP == $(cb).offsetParent().attr('id')) {
+            var offsetParentId = $(cb).offsetParent().attr('id');
+            console.log('判断题选项' + k + '的offsetParent id:', offsetParentId);
+            if (lasOffsetP == offsetParentId) {
+                console.log('判断题选项' + k + '属于当前问题组');
                 choiceList[choiceList.length - 1].push(cb);
             } else {
+                console.log('判断题选项' + k + '开始新问题组，前一个组id:', lasOffsetP);
                 var l = [];
                 l.push(cb);
                 choiceList.push(l);
-                lasOffsetP = $(cb).offsetParent().attr('id');
+                lasOffsetP = offsetParentId;
             }
         });
-        an.forEach(a => {
+        console.log('判断题分组完成，组数:', choiceList.length);
+
+        // 使用正确答案作答
+        console.log('开始使用答案作答，an数组:', an);
+        console.log('checkList结构:', checkList);
+        console.log('choiceList结构:', choiceList);
+
+        an.forEach((a, index) => {
+            console.log('处理第' + (index + 1) + '个答案:', a);
             if (a == null || a == undefined || a.length <= 0) {
+                console.log('答案为空或无效，跳过');
                 return;
             }
-            if (a[0].match(/[A-Z]/) && a[0].length == 1 && EnableAutoAnswerChoices) {
+
+            // 检查是否为选择题答案（A-D字母）
+            if (a[0].match(/[A-Z]/i) && a[0].length == 1 && EnableAutoAnswerChoices) {
+                console.log('识别为选择题答案');
+                if (checkList.length === 0) {
+                    console.error('checkList为空，无法处理选择题');
+                    return;
+                }
                 var cb = checkList.shift();
+                console.log('当前问题的选项数组:', cb);
                 a.forEach(aa => {
-                    var cccb = $(cb[aa.charCodeAt() - 65]);
-                    if (cccb[0] === undefined || (cccb[0] != undefined && cccb[0].className.search('selected') < 0))
+                    console.log('选择答案:', aa);
+                    var charCode = aa.toUpperCase().charCodeAt(0);
+                    var optionIndex = charCode - 65; // A=0, B=1, C=2, D=3
+                    console.log('字母' + aa + '的索引:', optionIndex);
+                    var cccb = $(cb[optionIndex]);
+                    console.log('找到的选项元素:', cccb.length > 0 ? '找到' : '未找到');
+                    if (cccb[0] === undefined) {
+                        console.error('选项' + aa + '不存在，选项总数:', cb.length);
+                    } else if (cccb[0].className.search('selected') < 0) {
+                        console.log('点击选项' + aa);
                         cccb.click();
+                    } else {
+                        console.log('选项' + aa + '已经选中');
+                    }
                 });
             } else if (a[0].match(/(([tT][rR][uU][eE])|([fF][aA][lL][sS][eE]))/) && EnableAutoAnswerJudges) {
+                console.log('识别为判断题答案');
+                if (choiceList.length === 0) {
+                    console.error('choiceList为空，无法处理判断题');
+                    return;
+                }
                 var ccb = choiceList.shift();
+                console.log('当前判断题选项:', ccb);
                 a.forEach(aa => {
-                    if (aa.match(/([tT][rR][uU][eE])/))
+                    console.log('判断题答案:', aa);
+                    if (aa.match(/([tT][rR][uU][eE])/)) {
+                        console.log('点击"正确"按钮');
                         ccb[0].click();
-                    else
+                    } else {
+                        console.log('点击"错误"按钮');
                         ccb[1].click();
+                    }
                 });
+            } else {
+                console.log('未知答案类型:', a[0]);
             }
             return;
-
         });
+
+        // 填空和简答题
         if (EnableAutoAnswerFills) {
             FillAnswers();
             $.globalEval("$('textarea, .blank-input').trigger('change')");
         }
+
+        // 提交正确答案 - 等待3秒让页面处理所有选择
         if (EnableAutoPlay) {
+            console.log('所有答案已选择，等待3秒让页面处理...');
+            // 同步等待3秒
+            var waitStart = Date.now();
+            while (Date.now() - waitStart < 3000) {
+                // 繁忙等待
+            }
+            console.log('等待结束，开始提交');
+
             $('textarea, .blank-input').trigger('change');
-            $('.btn-submit').click();
-            var A_tmp = $('video');
-            var A = [];
-            for (let d = 0; d < A_tmp.length; d++) {
-                if (A_tmp[d].src != "") {
-                    A.push(A_tmp[d]);
+            // 寻找包含"提交"文本的提交按钮
+            var submitBtns = $('.btn-submit:contains("提交")');
+            if (submitBtns.length > 0) {
+                console.log('找到提交按钮，点击提交正确答案');
+                submitBtns.click();
+            } else {
+                // 如果没有找到特定文本的提交按钮，尝试所有提交按钮
+                console.log('未找到包含"提交"的按钮，尝试所有.btn-submit按钮');
+                $('.btn-submit').click();
+            }
+            console.log('正确答案已提交');
+
+            // 等待题目显示"回答正确"
+            autoAnswering = false;
+            var checkCount = 0;
+            var maxChecks = 6; // 最多检查6次，每次2秒，总共最多12秒
+            var checkInterval = 2000; // 每2秒检查一次
+
+            function checkAndNavigate() {
+                checkCount++;
+                console.log('检查题目完成状态，第' + checkCount + '次');
+
+                var qw = $('.question-wrapper');
+                if (qw.length === 0) {
+                    console.log('没有题目，可能是非题目页面，尝试翻页');
+                    GotoNextPage();
+                    return;
+                }
+
+                // 检查题目是否完成（有.finished类）
+                var completedQuestions = $('.question-wrapper.finished');
+                var allCompleted = completedQuestions.length === qw.length;
+
+                // 也可以检查是否有"回答正确"文本
+                var correctTextFound = false;
+                qw.each(function(k, v) {
+                    var text = $(v).text();
+                    if (text.includes('回答正确')) {
+                        correctTextFound = true;
+                    }
+                });
+
+                console.log('题目统计：总共', qw.length, '个，已完成', completedQuestions.length, '个，找到"回答正确"文本：', correctTextFound);
+
+                if (allCompleted || correctTextFound) {
+                    console.log('题目已完成，准备翻页');
+                    GotoNextPage();
+                } else if (checkCount < maxChecks) {
+                    console.log('题目未完成，继续等待');
+                    setTimeout(checkAndNavigate, checkInterval);
+                } else {
+                    console.log('等待超时，尝试翻页');
+                    GotoNextPage();
                 }
             }
-            if (A.length === 0) {
-                autoAnswering = false;
-                GotoNextPage();
-                return;
-            }
+
+            // 第一次检查等待3秒
+            setTimeout(checkAndNavigate, 3000);
+            return;
         }
         autoAnswering = false;
     }
